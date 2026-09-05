@@ -81,6 +81,20 @@ Each day is a header (big day number + weekday, muted month right-aligned) with 
 
 The first day in the window is highlighted as "today" (accent-coloured day number).
 
+## Languages
+
+Panel text follows the panel's language (Settings → Devices, or the app-wide
+default under Settings → Server). Weekday and month labels come from the
+browser's own locale data via `Intl`, so they need no translation. The
+handful of fixed phrases ("Schedule", "ALL DAY", "until", "(no events)" and
+so on) live in `strings/<tag>.json`; English and French ship today.
+
+To add a language, copy `strings/en.json` to `strings/<tag>.json`, translate
+the values (keep the keys), add the tag to `locales` in `plugin.json`, and
+open a PR. The 12-hour time chip uses the locale's own am/pm marker when it
+is short enough to fit; pick **24-hour** under Time format for languages
+where it isn't.
+
 ## Timezone handling
 
 Day grouping happens server-side using your **Settings → Timezone** setting, so an event at 23:00 UTC on Wed renders under Thu's bucket for a user in Europe/Berlin (UTC+2). Time strings ("3:45 – 4:45pm") are formatted client-side, also in that zone (Tesserae 0.44.10+ forwards the setting to the rendering Chromium so the device frame matches the preview).

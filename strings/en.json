@@ -1,0 +1,11 @@
+{
+  "title": "Schedule",
+  "all_day": "ALL DAY",
+  "until": "until",
+  "no_events_day": "(no events)",
+  "no_upcoming": "No upcoming events.",
+  "untitled": "(untitled)",
+  "capped": "capped",
+  "capped_help": "More events were available; raise \"Max events across the whole agenda\" to show them.",
+  "continued": "cont."
+}

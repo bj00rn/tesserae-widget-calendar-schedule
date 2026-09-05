@@ -1,0 +1,11 @@
+{
+  "title": "Agenda",
+  "all_day": "JOURNÉE",
+  "until": "jusqu'à",
+  "no_events_day": "(aucun événement)",
+  "no_upcoming": "Aucun événement à venir.",
+  "untitled": "(sans titre)",
+  "capped": "limité",
+  "capped_help": "D'autres événements étaient disponibles ; augmentez « Max events across the whole agenda » pour les afficher.",
+  "continued": "suite"
+}

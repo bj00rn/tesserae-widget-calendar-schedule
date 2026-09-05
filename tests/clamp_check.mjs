@@ -139,3 +139,22 @@ function hsvToHex(h, s, v) {
 }
 
 console.log("clamp_check.mjs: all assertions passed");
+
+// v0.7.0 locale-aware day labels + chip time (issue tesserae#279).
+const { dayLabel, parseDateIso, formatChipLabel } = await import("../client.js");
+const mon = { date_iso: "2026-09-07", day_of_week_short: "MON", month_short: "SEP", day_of_month: 7 };
+assert.equal(parseDateIso("2026-09-07").getDate(), 7, "date_iso parses as local midnight");
+assert.equal(parseDateIso("nope"), null);
+assert.equal(dayLabel(mon, "weekday", "short", "en"), "MON", "English short keeps server label");
+assert.equal(dayLabel(mon, "weekday", "minimal", "en"), "M", "English minimal uses the table");
+assert.equal(dayLabel(mon, "month", "full", "en"), "September");
+assert.equal(dayLabel(mon, "weekday", "short", "sk"), "PON", "Slovak short from Intl");
+assert.equal(dayLabel(mon, "weekday", "full", "sk"), "Pondelok", "Slovak full, capitalised");
+assert.equal(dayLabel(mon, "month", "short", "fr"), "SEP");
+assert.equal(dayLabel(mon, "weekday", "full", "fr"), "Lundi");
+assert.equal(dayLabel({ day_of_week_short: "TUE" }, "weekday", "short", "sk"), "TUE", "no date_iso falls back to server label");
+assert.equal(formatChipLabel("2026-09-07T15:00:00+02:00", "24h", "sk"), "15:00");
+assert.match(formatChipLabel("2026-09-07T15:30:00+02:00", "12h", "en"), /^3:30pm$/);
+const skChip = formatChipLabel("2026-09-07T15:00:00+02:00", "12h", "sk");
+assert.match(skChip, /^3\S{0,4}$/, `Slovak 12h chip stays compact: ${skChip}`);
+console.log("locale checks ok");

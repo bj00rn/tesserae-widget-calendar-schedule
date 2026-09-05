@@ -16,19 +16,81 @@
 // day_row_padding_em before sending them down; now the raw slider value
 // comes straight through in ctx.cell.options and this does the clamping
 // client-side instead.
-// date_label_style cell option: "short" (default, server-provided
-// 3-letter labels as-is), "minimal" (1-2 chars), or "full" (whole word,
-// via the *_FULL lookup maps below since the server only ever sends
-// the short form).
+// date_label_style cell option: "short" (default, 3-letter upper-case),
+// "minimal" (1-2 chars), or "full" (whole word). v0.7.0: the label is
+// derived client-side from the day's ``date_iso`` in the panel's locale
+// (ctx.locale) via Intl, the same way the bundled calendar_* widgets do
+// it, so a Slovak panel reads "PON" / "SEP" rather than the server's
+// C-locale strftime output. English keeps its hand-picked tables so the
+// minimal style stays unambiguous (Tu/Th, Jn/Jl); other languages take
+// the first two letters of the Intl name.
 const DOW_MINIMAL = { SUN: "SU", MON: "M", TUE: "TU", WED: "W", THU: "TH", FRI: "F", SAT: "SA" };
 const MONTH_MINIMAL = { JAN: "JA", FEB: "F", MAR: "MR", APR: "AP", MAY: "MY", JUN: "JN", JUL: "JL", AUG: "AU", SEP: "S", OCT: "O", NOV: "N", DEC: "D" };
 const DOW_FULL = { SUN: "Sunday", MON: "Monday", TUE: "Tuesday", WED: "Wednesday", THU: "Thursday", FRI: "Friday", SAT: "Saturday" };
 const MONTH_FULL = { JAN: "January", FEB: "February", MAR: "March", APR: "April", MAY: "May", JUN: "June", JUL: "July", AUG: "August", SEP: "September", OCT: "October", NOV: "November", DEC: "December" };
 
+// Legacy path: style a server-provided English 3-letter label. Kept for
+// a ``days[]`` row with no ``date_iso`` (pre-0.7 server) and for English,
+// where the tables above are the source of truth.
 export function styleShortLabel(label, style, minimalMap, fullMap) {
   if (style === "minimal") return minimalMap[label] || label.slice(0, 2);
   if (style === "full") return (fullMap && fullMap[label]) || label;
   return label;
+}
+
+// "YYYY-MM-DD" -> local Date at midnight (no UTC shift), or null.
+export function parseDateIso(iso) {
+  const m = typeof iso === "string" && /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
+function isEnglish(locale) {
+  return String(locale || "en").split("-")[0].toLowerCase() === "en";
+}
+
+function intlName(date, unit, locale) {
+  try {
+    return new Intl.DateTimeFormat(locale, { [unit]: "long" }).format(date);
+  } catch {
+    return new Intl.DateTimeFormat("en", { [unit]: "long" }).format(date);
+  }
+}
+
+// Weekday or month label for one day row, in ``style``, for ``locale``.
+// ``unit`` is "weekday" or "month". Falls back to the server's English
+// short label when the row carries no parseable ``date_iso``.
+export function dayLabel(day, unit, style, locale) {
+  const date = parseDateIso(day && day.date_iso);
+  const serverShort = unit === "weekday" ? (day && day.day_of_week_short) || "" : (day && day.month_short) || "";
+  if (!date || isEnglish(locale)) {
+    return styleShortLabel(
+      serverShort || (date ? intlName(date, unit, "en").slice(0, 3).toUpperCase() : ""),
+      style,
+      unit === "weekday" ? DOW_MINIMAL : MONTH_MINIMAL,
+      unit === "weekday" ? DOW_FULL : MONTH_FULL,
+    );
+  }
+  const full = intlName(date, unit, locale);
+  if (style === "full") return full.charAt(0).toUpperCase() + full.slice(1);
+  if (style === "minimal") return full.slice(0, 2).toUpperCase();
+  return full.slice(0, 3).toUpperCase();
+}
+
+// ctx.t() when the host provides it (Tesserae >= 0.364 with this widget's
+// ``locales`` declared); otherwise the English fallback text.
+function translator(ctx) {
+  const t = ctx && typeof ctx.t === "function" ? ctx.t : null;
+  return (key, fallback) => {
+    const out = t ? t(key, fallback) : fallback;
+    return typeof out === "string" && out ? out : fallback;
+  };
+}
+
+// A string safe to embed inside a CSS double-quoted string token.
+function cssString(s) {
+  return String(s ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, " ");
 }
 
 export function clampScale(raw, def, lo, hi) {
@@ -150,7 +212,7 @@ export default function render(shadow, ctx) {
   const data = (ctx && ctx.data) || {};
   const options = readOptions(ctx);
   const fontFamily = (ctx && ctx.font && ctx.font.family) || "Archivo, system-ui, sans-serif";
-  shadow.innerHTML = layout(data, options, fontFamily);
+  shadow.innerHTML = layout(data, options, fontFamily, ctx);
   if (isAutoColumns(options)) {
     scheduleAutoColumns(shadow);
   } else {
@@ -297,13 +359,15 @@ function fitColumns(shadow) {
   ensureContinuationHeaders(shadow);
 }
 
-function layout(data, options, fontFamily) {
+function layout(data, options, fontFamily, ctx) {
+  const t = translator(ctx);
+  const locale = (ctx && ctx.locale) || "en";
   if (data && data.time_format && String(data.time_format).toLowerCase() === "auto") {
     data = { ...data, time_format: "12h" };
   }
   const showTitle = data.show_title !== false;
   const truncated = !!data.truncated;
-  const titleHtml = showTitle ? renderTitle(truncated) : "";
+  const titleHtml = showTitle ? renderTitle(truncated, t) : "";
   if (data.error) {
     return `
       ${styles(fontFamily)}
@@ -322,7 +386,7 @@ function layout(data, options, fontFamily) {
         <div class="body">
           <div class="notice">
             <i class="ph ph-calendar-blank" aria-hidden="true"></i>
-            <p>No upcoming events.</p>
+            <p>${escapeHtml(t("no_upcoming", "No upcoming events."))}</p>
           </div>
         </div>
       </div>
@@ -350,7 +414,8 @@ function layout(data, options, fontFamily) {
   const dashboardTitleScale = clampScale(options.title_scale, 1.0, 0.01, 10.0);
   const headerScale = clampScale(options.header_scale, 1.0, 0.01, 10.0);
   const labelStyle = ["short", "minimal", "full"].includes(options.date_label_style) ? options.date_label_style : "short";
-  const styleAttr = `--event-title-scale:${eventTitleScale};--time-scale:${timeScale};--loc-scale:${locScale};--row-pad:${rowPad}em;--dashboard-title-scale:${dashboardTitleScale};--header-scale:${headerScale};`;
+  const contLabel = cssString(t("continued", "cont."));
+  const styleAttr = `--event-title-scale:${eventTitleScale};--time-scale:${timeScale};--loc-scale:${locScale};--row-pad:${rowPad}em;--dashboard-title-scale:${dashboardTitleScale};--header-scale:${headerScale};--cont-label:&quot;${escapeHtml(contLabel)}&quot;;`;
   const spans = allDaySpans(days);
   return `
     ${styles(fontFamily)}
@@ -358,21 +423,21 @@ function layout(data, options, fontFamily) {
       ${titleHtml}
       <div class="body">
         <div class="days">
-          ${days.map((d, i) => renderDay(d, tf, showColour, useSymbol, labelStyle, i, spans, days)).join("")}
+          ${days.map((d, i) => renderDay(d, tf, showColour, useSymbol, labelStyle, i, spans, days, t, locale)).join("")}
         </div>
       </div>
     </div>
   `;
 }
 
-function renderTitle(truncated) {
+function renderTitle(truncated, t) {
   const truncatedPill = truncated
-    ? `<span class="title-pill" title="More events were available; lift Max events across the whole agenda to show them.">capped</span>`
+    ? `<span class="title-pill" title="${escapeAttr(t("capped_help", "More events were available; raise \"Max events across the whole agenda\" to show them."))}">${escapeHtml(t("capped", "capped"))}</span>`
     : "";
   return `
     <div class="title">
       <i class="ph-bold ph-list-bullets" aria-hidden="true"></i>
-      <span class="title-text">Schedule</span>
+      <span class="title-text">${escapeHtml(t("title", "Schedule"))}</span>
       ${truncatedPill}
     </div>
   `;
@@ -402,19 +467,19 @@ function allDaySpanKey(ev) {
   return `${ev.summary}|${ev.colour || ""}|${ev.location || ""}`;
 }
 
-function renderDay(day, timeFormat, showColour, useSymbol, labelStyle, dayIndex, spans, allDays) {
+function renderDay(day, timeFormat, showColour, useSymbol, labelStyle, dayIndex, spans, allDays, t, locale) {
   const events = Array.isArray(day.events) ? day.events : [];
   const allDayHere = events.filter((e) => e && e.all_day === true);
   const allDay = allDayHere.filter((e) => spans.first.get(allDaySpanKey(e)) === dayIndex);
   const timed = events.filter((e) => e && e.all_day !== true);
   const allDayHtml = allDay.length
-    ? `<div class="all-day-stack">${allDay.map((e) => renderAllDay(e, showColour, spans, allDays, dayIndex)).join("")}</div>`
+    ? `<div class="all-day-stack">${allDay.map((e) => renderAllDay(e, showColour, spans, allDays, dayIndex, t, locale)).join("")}</div>`
     : "";
   const timedHtml = timed.length
-    ? `<div class="rail">${timed.map((e) => renderTimed(e, timeFormat, showColour, useSymbol)).join("")}</div>`
+    ? `<div class="rail">${timed.map((e) => renderTimed(e, timeFormat, showColour, useSymbol, t, locale)).join("")}</div>`
     : "";
   const empty = !allDayHere.length && !timed.length
-    ? `<div class="day-empty">(no events)</div>`
+    ? `<div class="day-empty">${escapeHtml(t("no_events_day", "(no events)"))}</div>`
     : "";
   const todayClass = day.is_today ? " is-today" : "";
   // v0.4.3: stamp a stable id + duplicated header markup on data-*
@@ -426,8 +491,8 @@ function renderDay(day, timeFormat, showColour, useSymbol, labelStyle, dayIndex,
     <section class="day${todayClass}" data-day-id="${dayId}">
       <header class="day-header" data-day-header>
         <span class="day-num">${escapeHtml(String(day.day_of_month ?? ""))}</span>
-        <span class="day-dow">${escapeHtml(styleShortLabel(day.day_of_week_short || "", labelStyle, DOW_MINIMAL, DOW_FULL))}</span>
-        <span class="day-month">${escapeHtml(styleShortLabel(day.month_short || "", labelStyle, MONTH_MINIMAL, MONTH_FULL))}</span>
+        <span class="day-dow">${escapeHtml(dayLabel(day, "weekday", labelStyle, locale))}</span>
+        <span class="day-month">${escapeHtml(dayLabel(day, "month", labelStyle, locale))}</span>
       </header>
       ${allDayHtml}
       ${timedHtml}
@@ -436,35 +501,35 @@ function renderDay(day, timeFormat, showColour, useSymbol, labelStyle, dayIndex,
   `;
 }
 
-function renderAllDay(ev, showColour, spans, allDays, dayIndex) {
-  const title = escapeHtml(ev.summary || "(untitled)");
+function renderAllDay(ev, showColour, spans, allDays, dayIndex, t, locale) {
+  const title = escapeHtml(ev.summary || t("untitled", "(untitled)"));
   const bg = showColour && ev.colour ? ev.colour : "var(--text-primary, #1B1A16)";
   const styleAttr = `style="background:${escapeAttr(bg)}"`;
   const lastIndex = spans.last.get(allDaySpanKey(ev));
   const lastDay = lastIndex > dayIndex ? allDays[lastIndex] : null;
   const spanBadge = lastDay
-    ? `<span class="all-day-span">&rarr; ${escapeHtml(styleShortLabel(lastDay.month_short || "", "short", MONTH_MINIMAL, MONTH_FULL))} ${escapeHtml(String(lastDay.day_of_month ?? ""))}</span>`
+    ? `<span class="all-day-span">&rarr; ${escapeHtml(dayLabel(lastDay, "month", "short", locale))} ${escapeHtml(String(lastDay.day_of_month ?? ""))}</span>`
     : "";
   return `
     <div class="all-day" ${styleAttr}>
-      <span class="all-day-label">ALL DAY</span>
+      <span class="all-day-label">${escapeHtml(t("all_day", "ALL DAY"))}</span>
       <span class="all-day-title">${title}</span>
       ${spanBadge}
     </div>
   `;
 }
 
-function renderTimed(ev, timeFormat, showColour, useSymbol) {
-  const title = escapeHtml(ev.summary || "(untitled)");
-  const startChip = formatChipLabel(ev.start_local, timeFormat);
-  const endLabel = formatChipLabel(ev.end_local, timeFormat);
+function renderTimed(ev, timeFormat, showColour, useSymbol, t, locale) {
+  const title = escapeHtml(ev.summary || t("untitled", "(untitled)"));
+  const startChip = formatChipLabel(ev.start_local, timeFormat, locale);
+  const endLabel = formatChipLabel(ev.end_local, timeFormat, locale);
   const bg = showColour && ev.colour ? ev.colour : "var(--text-primary, #1B1A16)";
   // ev.colour is already None-ed out server-side when show_dot_color is off,
   // so the symbols collapse to the fallback bullet along with the chip fill.
   const node = useSymbol ? colorToSymbol(ev.colour) : FALLBACK_SYMBOL;
   const chipStyle = `style="background:${escapeAttr(bg)}"`;
   const sub = endLabel
-    ? `until ${escapeHtml(endLabel)}${ev.location ? ` · ${escapeHtml(ev.location)}` : ""}`
+    ? `${escapeHtml(t("until", "until"))} ${escapeHtml(endLabel)}${ev.location ? ` · ${escapeHtml(ev.location)}` : ""}`
     : (ev.location ? escapeHtml(ev.location) : "");
   return `
     <div class="rail-row">
@@ -480,7 +545,10 @@ function renderTimed(ev, timeFormat, showColour, useSymbol) {
   `;
 }
 
-function formatChipLabel(iso, format) {
+// 12h keeps the compact "3pm" / "3:30pm" chip shape; the am/pm marker
+// comes from Intl's dayPeriod for the panel locale when it's short
+// enough to fit the chip, else the English suffix. 24h is locale-neutral.
+export function formatChipLabel(iso, format, locale) {
   if (typeof iso !== "string") return "";
   const d = new Date(iso);
   if (!Number.isFinite(d.getTime())) return "";
@@ -488,10 +556,22 @@ function formatChipLabel(iso, format) {
   const m = d.getMinutes();
   if (format === "12h") {
     const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
-    const suffix = h24 < 12 ? "am" : "pm";
+    const suffix = dayPeriod(d, locale) || (h24 < 12 ? "am" : "pm");
     return m === 0 ? `${h12}${suffix}` : `${h12}:${pad2(m)}${suffix}`;
   }
   return `${pad2(h24)}:${pad2(m)}`;
+}
+
+function dayPeriod(date, locale) {
+  if (!locale || isEnglish(locale)) return "";
+  try {
+    const parts = new Intl.DateTimeFormat(locale, { hour: "numeric", hour12: true }).formatToParts(date);
+    const dp = parts.find((p) => p.type === "dayPeriod");
+    const text = dp ? dp.value.trim().toLowerCase() : "";
+    return text && text.length <= 4 ? text : "";
+  } catch {
+    return "";
+  }
 }
 
 function pad2(n) {
@@ -646,7 +726,7 @@ function styles(fontFamily) {
         line-height: 1;
       }
       .day-header--continuation::after {
-        content: "cont.";
+        content: var(--cont-label, "cont.");
         font-size: 0.62em;
         letter-spacing: 0.08em;
         text-transform: uppercase;

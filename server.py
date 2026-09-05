@@ -8,6 +8,11 @@ event at 23:00 UTC on Wed renders under Thu's bucket for a user in
 Europe/Berlin (UTC+2) the way the user expects. UTC ISO timestamps
 still go out to the client unchanged so client.js can pick its own
 locale-format for the time strings.
+
+Day labels: ``date_iso`` is the source of truth for the client, which
+derives weekday / month names from ``Intl`` in the panel's locale. The
+``day_of_week_short`` / ``month_short`` fields (C-locale ``strftime``,
+so always English) remain as a fallback for an older client.js.
 """
 
 from __future__ import annotations
@@ -227,7 +232,9 @@ def fetch(
             continue
 
         row: dict[str, Any] = {
-            "summary": ev.get("summary") or "(untitled)",
+            # Empty stays empty: client.js supplies the "(untitled)"
+            # placeholder through ctx.t() so it follows the panel locale.
+            "summary": ev.get("summary") or "",
             "all_day": all_day,
             "colour": (ev.get("feed_colour") if show_dot_color else None),
             "feed_name": ev.get("feed_name") or "",
