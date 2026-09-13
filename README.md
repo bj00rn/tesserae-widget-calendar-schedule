@@ -87,7 +87,7 @@ Panel text follows the panel's language (Settings → Devices, or the app-wide
 default under Settings → Server). Weekday and month labels come from the
 browser's own locale data via `Intl`, so they need no translation. The
 handful of fixed phrases ("Schedule", "ALL DAY", "until", "(no events)" and
-so on) live in `strings/<tag>.json`; English, French and German ship today.
+so on) live in `strings/<tag>.json`; English, French, German and Swedish ship today.
 
 To add a language, copy `strings/en.json` to `strings/<tag>.json`, translate
 the values (keep the keys), add the tag to `locales` in `plugin.json`, and
